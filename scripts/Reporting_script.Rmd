@@ -1,0 +1,220 @@
+---
+title: "Nowcast Report"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+    number_sections: false
+params:
+ data:
+      label: Insert variable storing model outputs here
+      value: NULL
+ output_dir: ""
+---
+
+
+This script is used to generate a bare-bones Nowcast report, where the modelled data generated in main_script_webversion.r is visualized using various techniques. Edit and stylize this report to suit your needs.
+
+
+```{r loading, echo=F, message=F, results=F, warning=F}
+##########################################################
+# Load plotting functions
+##########################################################
+source("Pltfcn_NML_nowcast_core.r")
+```
+
+```{r check_file,  echo=F, message=F}
+##########################################################
+# Check if proper data file is loaded & unload required data parameters
+##########################################################
+
+#First eval is to check if dataframe & if the expected columns exists
+if(is.data.frame(params$data$propDF) & any(c("weekDate", "variant", "week.x", "Freq", "total", 
+                                  "prop", "weight",  "week.y", "predicted", "std.error",
+                                  "conf.low", "conf.high","group", "sublineage_grouped", "prop.diff", "withinInd", "projInd")
+                                  %in% names(params$data$propDF))){
+  #If correct format then load all required variables for plotting
+    data <- params$data$propDF
+    data2 <- params$data$propDF.r #PropDF with coefficients 
+    data3 <- params$data$propDF.s
+    ref2use <- params$data$ref2use
+    actual_time_end <- params$data$actual_time_end
+    model_weeks <- params$data$params$model_weeks
+    nweekPred <- params$data$params$nweekPred
+    tweeks <- params$data$tweeks
+    vweeks <- params$data$vweeks
+    toestim <- params$data$params$toestim
+    dateCntsLong.s <- params$data$dateCntsLong.s
+    mnModel3.coefDF <- params$data$mnModel3.coefDF
+    mnMOdel3.coef <- params$data$mnMOdel3.coef
+    propDF2.1a <- params$data$propDF2.1a
+    propDF2.1b.init <- params$data$propDF2.1b.init
+    
+}else{
+  stop("Incorrect data format loaded. Ensure you're loading the 'propDF' dataframe outputted after modelling. (i.e. standard$propDF)")
+}
+
+```
+
+<u> Below will list the modelled variants and their assigned supergroups only if the "WebteamX" model is specified (blank if not).</u>
+
+```{r webteam-supergroups, echo=F, message=F}
+#Show supergroups only if webteamX filter is used
+if(isTRUE(grep(toestim, pattern = "^webteam") == 1)){
+  #Pivot wider
+  pw <- propDF2.1a %>% mutate(PI = paste0(round(conf.l,2),"-",round(conf.h,2))) %>% dplyr::select(-c(conf.h,conf.l)) %>%
+  pivot_wider(id_cols=c("variant", "variant_aggregated", "supergroup"),
+                       names_from="week of collection",
+                       values_from=c("proportions","PI"))
+
+  #Make table
+  datatable(pw %>% dplyr::select(2,12,22,13,23) %>% arrange(supergroup) %>% mutate_if(is.numeric, round, 2),
+            caption="Proportions (%) are based on Nowcast forecasts",
+            options=list(pageLength=100,
+                         columnDefs=list(list(className='dt-center', targets=c(3,5))))
+            )
+}
+
+```
+```{r webteam-counts, echo=F, message=F}
+#Show supergroups only if webteamX filter is used
+if(isTRUE(grep(toestim, pattern = "^webteam") == 1)){
+  #Make table
+  datatable(propDF2.1b.init,
+            caption="Total (actual) counts per epiweek",
+            options=list(pageLength=100,
+                         columnDefs=list(list(className='dt-center', targets=c(1,2))))
+            )
+}
+
+```
+
+# Trend plot
+
+Each point represent the actual weekly proportions, while the curves and 95% prediction interval bands are estimated by the NML Nowcast model using the multinomial logistic regression approach. Variants are distinguished by colors. The dashed vertical line indicates the final day of the modelling period. Fitted curves to the right of the vertical line represent the forecasted projections.
+
+<u>The interactive plot presented below allows for the isolation of a chosen variant's display through a double-click or the toggling of its display with a single click.</u>
+
+```{r trend_plot_static, echo=F, warning=F, fig.show='hide'}
+#Plot static tending of actual vs model predicted data with 95% confidence intervals
+  #Note - the warning message is due to the NA's in the "prop" column (this is because of a lack of daily proportions)
+TP <- trendplot(dataTP=data,
+                npredweeks=nweekPred,
+                nweeksmodel=model_weeks,
+                dateformat="%b-%d",
+                cutoffline=actual_time_end)
+TP
+```
+```{r trend_plot_interactive, echo=F, fig.height=7, fig.width=10}
+#Plot interactive version of the trend plot
+  #NOTE - REQUIRES THE STATIC VERSION ABOVE TO BE GENERATED FIRST
+trendplotly(TP)
+```
+
+# Stacked barplot
+
+This visualization consists of two plots depicting the "Actual" and "Nowcast" proportions of Pango lineages within a given reporting epiweek. The upper plot, labeled "Actual," is constructed based on existing counts extracted from genomic surveillance. The lower plot, labeled "Nowcast" showcases proportions estimated by the NML Nowcast model, which employs a multinomial logistic regression approach. A grey rectangle positioned at the top of the trailing weeks serves as an indicator of a period during which data may be incomplete.  
+
+<u>The interactive plot presented below allows for the isolation of a chosen variant's display through a double-click or the toggling of its display with a single click.</u>
+
+
+```{r stackedbar_plot_static, echo=F, fig.show='hide', fig.height=9, fig.width=10}
+#Plot the modelled data as stacked bar plots (static)
+
+#Actual data
+stackedbar_actual <- stackedbarplot(dataSBP = data,
+               forecastbarend = nweekPred,
+               nweekmodeled=model_weeks,
+               actualorpred = "prop",
+               datefmt = "%b-%d",
+               yinc=25) 
+
+
+#Nowcast data
+    stackedbar_predicted <- stackedbarplot(dataSBP = data, 
+               forecastbarend = nweekPred, 
+               nweekmodeled=model_weeks,
+               actualorpred = "predicted",
+               datefmt = "%b-%d",
+               yinc=25) 
+
+    
+plot(stackedbar_actual)
+plot(stackedbar_predicted)
+```
+
+```{r stackedbar_plot_interactive, echo=F, fig.height=9, fig.width=10}
+#Plot the modelled data as stacked bar plots (interactive)
+  #NOTE - REQUIRES THE STATIC VERSION ABOVE TO BE GENERATED FIRST
+stackedbarplotly(ggstackedactual = stackedbar_actual, ggstackedpredicted = stackedbar_predicted)
+```
+
+# Pivot table
+The pivot table below allows users to perform a range of functions on the modelled data to provide further insights. The default table provides predicted proportions for each variant (row) in each epiweek (column). This allows users to get the total proportion for a group of selected variants. To view the actual proportion, users can select “Actual Proportion (%)” in the dropdown menu. Users can also specify other mathematical functions on the data instead of “Sum”. Plots can be generated by changing the dropdown menu set with “Table” as the default. The user can also filter for specific variants and epiweeks by using the dropdown menu associated with either variable.
+
+```{r pivot_table, echo=F, fig.height=10, fig.width=9}
+#Show an interactive pivot table containing all data
+
+plotpivottable(datapvt = data)
+```
+
+# Coefficient plot
+Each modeled variant is depicted as a point and distinguished by colors. The x-axis shows the corresponding proportion estimates for the final forecasted week, and the y-axis represents the daily selection coefficients relative to the reference group. The 95% prediction and confidence intervals of the proportion estimates and coefficients are illustrated through horizontal and vertical lines extending from the points, respectively. 
+
+
+```{r, echo=F, week_over_week_plot_static}
+#Plot a non-interactive version of the week over week plot for the model coefficients
+WOWplot(dataT = data3)
+```
+
+# Coefficient table
+Below are the coefficient and intercepts for each modelled variant using the multinomial logistic regression model.
+
+```{r coeff_table, echo=F}
+CoefTable <- data.frame(mnMOdel3.coef) %>% tibble::rownames_to_column("Variants") %>% mutate_if(is.numeric, round, 2) %>%
+  arrange(desc(week)) %>% dplyr::rename("Coefficient" = "week")
+
+#Show table of coefficients
+CT <- CoeffDT(ctable = CoefTable)
+CT
+```
+
+# Logit plots
+The logit plot of each modelled variant group with respect to the selected reference group.
+
+
+```{r logit-full, echo=F}
+#Generate logit plots
+lplot <- logitplot(ncOutput = data)
+```
+
+
+```{r logitplots-full, echo=F, results='hide', fig.width=8, fig.height=min(8,2*ceiling(length(lplot)/3))}
+#Plot logit
+ggarrange(plotlist=lplot,
+          ncol=3,
+          nrow=min(4,ceiling(length(lplot)/3)),
+          widths = 30,
+          heights= 30)
+```
+
+* **
+* **
+Legal  
+Copyright Government of Canada 2023  
+<br></br>
+Written by: National Microbiology Laboratory, Public Health Agency of Canada  
+<br></br>
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use this work except in compliance with the License. You may obtain a copy of the License at:  
+<br></br>
+http://www.apache.org/licenses/LICENSE-2.0
+<br></br>
+Unless required by applicable law or agreed to in writing, software distributed under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the License for the specific language governing permissions and limitations under the License.
+<br></br>
+
+* **
+
+NML Nowcast is developed and maintained by Julie Chen and Nelson Mok
+
